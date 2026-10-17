@@ -8,14 +8,26 @@
 <style>
 :root{--bg:#f6f5f2;--card:#fff;--ink:#1d1d1b;--sub:#6b6a66;--line:#e3e1dc;--accent:#1f6f5c;--warn:#a15c00;--err:#b42318;--chip:#efede8}
 @media (prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--ink:#ecebe7;--sub:#a3a29d;--line:#33332f;--accent:#5cc2a4;--warn:#e0a24a;--err:#f2726a;--chip:#2a2a27}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
-main{max-width:640px;margin:0 auto;padding:16px}
-h1{font-size:18px;margin:4px 0 12px;display:flex;justify-content:space-between;align-items:center}
-h2{font-size:15px;margin:24px 0 8px;color:var(--sub)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
-.meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+*{box-sizing:border-box}html,body{overflow-x:hidden}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
+main{max-width:640px;margin:0 auto;padding:0 16px 32px}
+h1{font-size:18px;margin:12px 0 4px;display:flex;justify-content:space-between;align-items:center}
+.daybar{position:sticky;top:0;z-index:2;background:var(--bg);display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:12px}
+.daybar .title{text-align:center;line-height:1.3}.daybar .title strong{font-size:16px;display:block}.daybar .title span{font-size:12px;color:var(--sub)}
+.nav{background:var(--chip);color:var(--ink);padding:8px 12px;font-size:13px;min-width:72px}
+.nav .badge{color:var(--warn)}
+.tools{display:flex;justify-content:space-between;margin:0 0 8px}
+#day{transition:transform .18s ease,opacity .18s ease;touch-action:pan-y}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;margin:0 0 10px;overflow:hidden}
+.head{display:block;width:100%;text-align:left;background:none;color:var(--ink);padding:12px 14px;border-radius:0;font-weight:400}
+.meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.meta .chev{margin-left:auto;color:var(--sub);transition:transform .15s}
+.card.open .chev{transform:rotate(180deg)}
+.preview{font-size:13px;color:var(--sub);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card.open .preview{display:none}
+.body{display:none;padding:0 14px 14px}
+.card.open .body{display:block}
 .chip{background:var(--chip);border-radius:999px;padding:2px 10px;font-size:12px}
-.st-approved,.st-posted{color:var(--accent);font-weight:600}.st-rejected,.st-failed{color:var(--err);font-weight:600}.st-pending{color:var(--warn);font-weight:600}
+.st-approved,.st-posted{color:var(--accent);font-weight:600}.st-rejected,.st-failed{color:var(--err);font-weight:600}.st-pending{color:var(--warn);font-weight:600}.st-skipped{color:var(--sub);font-weight:600}
 .hyp{font-size:13px;color:var(--sub);margin:0 0 8px}
 .msg{font-size:13px;margin:2px 0}.msg.err{color:var(--err)}.msg.warn{color:var(--warn)}
 textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;background:var(--bg);color:var(--ink);resize:vertical;overflow:hidden}
@@ -30,7 +42,9 @@ input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;fo
 .note{padding:8px;background:var(--bg);margin-top:8px}
 img{width:100%;border-radius:10px;margin:6px 0}
 a{color:var(--accent)}
-.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;display:none}
+.empty{text-align:center;color:var(--sub);padding:40px 0}
+.hint{text-align:center;font-size:12px;color:var(--sub);margin-top:16px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;display:none;z-index:3}
 </style>
 </head>
 <body>
@@ -39,9 +53,12 @@ a{color:var(--accent)}
 <script>
 // 静的な承認ページ。投稿データは非公開リポジトリにあり、ここには入っていない。
 // 最初に1回だけ GitHub のトークンを入れると、この端末のブラウザにだけ保存され、GitHub API で読み書きする。
+// 1ページ＝1日。左右のスワイプか上の ‹ › で日付を移る。投稿はタップで開閉する。
 const TYPE_LABEL = { tree:'ツリー', opinion:'思想', enemy:'仮想敵', failure:'失敗談', question:'問いかけ', log:'実験ログ', list:'リスト', visual:'図解', cta:'導線' };
 const STATUS_LABEL = { pending:'承認待ち', approved:'承認済み', rejected:'ボツ', posted:'投稿済み', failed:'失敗', skipped:'見送り' };
 const DEFAULTS = { repo: 'smitch-ai-works/threads-auto', branch: 'main', api: 'https://api.github.com' };
+// スワイプの向き（2026-10-18 本人：左にスワイプで前の日、右にスワイプで次の日）。逆にしたい時はここを 1 にする
+const SWIPE_LEFT = -1;
 
 function load(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }
 function save(k, v) { try { localStorage.setItem(k, v); } catch {} }
@@ -49,6 +66,9 @@ const cfg = () => ({ token: load('ta_token', ''), repo: load('ta_repo', DEFAULTS
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const jstDate = (o = 0) => new Date(Date.now() + 9*3600e3 + o*86400e3).toISOString().slice(0, 10);
+const WEEK = ['日','月','火','水','木','金','土'];
+function dayLabel(o) { return { '-1':'昨日', 0:'今日', 1:'明日', 2:'あさって' }[o] || ''; }
+function weekday(date) { return WEEK[new Date(date + 'T00:00:00Z').getUTCDay()]; }
 function b64ToUtf8(b64) { const bin = atob(b64.replace(/\n/g, '')); return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))); }
 function utf8ToB64(s) { const bytes = new TextEncoder().encode(s); let bin = ''; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin); }
 function toast(m) { const t = document.getElementById('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 1800); }
@@ -56,18 +76,22 @@ function toast(m) { const t = document.getElementById('toast'); t.textContent = 
 async function gh(path, opts = {}) {
   const c = cfg();
   const url = `${c.api}/repos/${c.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}` + (opts.method ? '' : `?ref=${c.branch}`);
-  const r = await fetch(url, { ...opts, headers: { Authorization: `Bearer ${c.token}`, Accept: opts.raw ? 'application/vnd.github.raw' : 'application/vnd.github+json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
+  // cache: no-store … GitHub の応答はブラウザに約60秒キャッシュされ、承認直後に古い「承認待ち」が出ていた（2026-10-18）
+  const r = await fetch(url, { ...opts, cache: 'no-store', headers: { Authorization: `Bearer ${c.token}`, Accept: opts.raw ? 'application/vnd.github.raw' : 'application/vnd.github+json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
   if (r.status === 404 && !opts.method) return null;
   if (!r.ok) throw new Error(`GitHub ${r.status}: ${(await r.text()).slice(0, 120)}`);
   return opts.raw ? r.blob() : r.json();
 }
 
 const posts = new Map(); // path -> { post, sha }
+const days = new Map();  // date -> [path]（読み込み済みの日）
+const opened = new Set(); // 開いている投稿の path
+let offset = 0;          // 今日からのずれ（日）
 
 function renderSetup(msg = '') {
   const c = cfg();
   document.getElementById('app').innerHTML = `<h1>Threads 承認</h1>
-  <div class="card">
+  <div class="card" style="padding:14px">
     <p class="hyp">最初に1回だけ設定します。トークンはこの端末のブラウザにだけ保存されます。</p>
     ${msg ? `<p class="msg err">${esc(msg)}</p>` : ''}
     <label class="hyp">GitHub のトークン（threads-auto の Contents を読み書きできるもの）</label>
@@ -79,25 +103,90 @@ function renderSetup(msg = '') {
   document.getElementById('go').onclick = () => { save('ta_token', document.getElementById('tk').value.trim()); save('ta_repo', document.getElementById('rp').value.trim()); main(); };
 }
 
-function cardHtml(path, post) {
+function cardHtml(path, post, open = false) {
   const ro = ['posted', 'failed', 'skipped'].includes(post.status);
   const checks = post.checks || { errors: [], warnings: [] };
   const msgs = [...(checks.errors || []).map((e) => `<p class="msg err">NG ${esc(e)}</p>`), ...(checks.warnings || []).map((w) => `<p class="msg warn">注意 ${esc(w)}</p>`)].join('');
   const parts = (post.parts || []).map((p, i) => {
     const n = [...(p.text || '')].length;
-    const img = p.image_path ? `<img data-img="${esc(p.image_path)}" alt="${esc(p.alt_text || '')}">` : p.image_request ? `<p class="hyp">画像：夜に作成予定（${esc(p.image_request.kind)}）</p>` : '';
+    const publicImages = (p.images?.length ? p.images : p.image_url ? [p.image_url] : []).filter((u) => {
+      try { return ['https:', 'http:'].includes(new URL(u).protocol); } catch { return false; }
+    });
+    const img = publicImages.length
+      ? publicImages.map((u, n) => `<img src="${esc(u)}" alt="${esc(p.alt_text || `投稿画像 ${n + 1}`)}">`).join('')
+      : p.image_path ? `<img data-img="${esc(p.image_path)}" alt="${esc(p.alt_text || '')}">` : p.image_request ? `<p class="hyp">画像：夜に作成予定（${esc(p.image_request.kind)}）</p>` : '';
     return `<div class="part"><label>${post.parts.length > 1 ? `${i+1}/${post.parts.length}` : '本文'}${p.link ? '（リンク付き）' : ''}</label>${img}
       <textarea data-i="${i}" ${ro ? 'readonly' : ''}>${esc(p.text)}</textarea><div class="count ${n > 500 ? 'over' : ''}">${n} / 500</div></div>`;
   }).join('');
   const result = post.status === 'posted' && post.result?.permalink ? `<p><a href="${esc(post.result.permalink)}" target="_blank" rel="noopener">Threadsで見る</a></p>` : post.result?.error ? `<p class="msg err">${esc(post.result.error)}</p>` : '';
   const btns = ro ? '' : `<input class="note" placeholder="メモ（直してほしい点など。AIが次に読む）" value="${esc(post.review?.note || '')}">
     <div class="btns"><button class="ng" data-act="reject">ボツ</button><button class="save" data-act="save">直して保存</button><button class="ok" data-act="approve">承認</button></div>`;
-  return `<section class="card" data-path="${esc(path)}">
-    <div class="meta"><strong>${esc(post.scheduled_at?.slice(11, 16))}</strong><span class="chip">${esc(TYPE_LABEL[post.type] || post.type)}</span><span class="chip">${esc((post.gc || '').toUpperCase())}</span>${post.origin === 'research' ? '<span class="chip">リサーチ由来</span>' : ''}<span class="st-${esc(post.status)}">${esc(STATUS_LABEL[post.status] || post.status)}</span></div>
-    ${post.hypothesis ? `<p class="hyp">ねらい：${esc(post.hypothesis)}</p>` : ''}${msgs}${parts}${result}${btns}</section>`;
+  const first = String(post.parts?.[0]?.text || '').split('\n').find((l) => l.trim()) || '';
+  const parts_n = (post.parts || []).length > 1 ? `<span class="chip">${post.parts.length}本</span>` : '';
+  return `<section class="card${open ? ' open' : ''}" data-path="${esc(path)}">
+    <button class="head" data-toggle><div class="meta"><strong>${esc(post.scheduled_at?.slice(11, 16))}</strong><span class="chip">${esc(TYPE_LABEL[post.type] || post.type)}</span>${parts_n}<span class="st-${esc(post.status)}">${esc(STATUS_LABEL[post.status] || post.status)}</span>${(checks.errors || []).length ? '<span class="msg err">NG</span>' : ''}<span class="chev">▾</span></div>
+    <div class="preview">${esc(first)}</div></button>
+    <div class="body">${post.hypothesis ? `<details class="hyp"><summary>ねらい</summary>${esc(post.hypothesis)}</details>` : ''}${msgs}${parts}${result}${btns}</div></section>`;
 }
 
 function fit(t) { t.style.height = 'auto'; t.style.height = (t.scrollHeight + 4) + 'px'; }
+
+async function loadDay(date, force = false) {
+  if (days.has(date) && !force) return days.get(date);
+  const list = await gh(`data/queue/${date}`);
+  const files = (list || []).filter((f) => f.type === 'file' && f.name.endsWith('.json')).sort((a, b) => a.name.localeCompare(b.name));
+  await Promise.all(files.map(async (f) => {
+    const j = await gh(f.path);
+    posts.set(f.path, { post: JSON.parse(b64ToUtf8(j.content).replace(/^﻿/, '')), sha: j.sha });
+  }));
+  days.set(date, files.map((f) => f.path));
+  return days.get(date);
+}
+
+const pendingOf = (date) => (days.get(date) || []).filter((p) => posts.get(p)?.post.status === 'pending').length;
+function navLabel(o, arrow) {
+  const n = days.has(jstDate(o)) ? pendingOf(jstDate(o)) : 0;
+  const name = dayLabel(o) || jstDate(o).slice(5).replace('-', '/');
+  return arrow === 'prev' ? `‹ ${name}${n ? ` <span class="badge">${n}</span>` : ''}` : `${name}${n ? ` <span class="badge">${n}</span>` : ''} ›`;
+}
+
+function renderDay() {
+  const date = jstDate(offset);
+  const list = days.get(date) || [];
+  const n = pendingOf(date);
+  const el = document.getElementById('day');
+  document.getElementById('bar').innerHTML = `<button class="nav" id="prev">${navLabel(offset - 1, 'prev')}</button>
+    <div class="title"><strong>${date.slice(5).replace('-', '/')}（${weekday(date)}）${dayLabel(offset)}</strong><span>${list.length}本${n ? `・承認待ち ${n}` : ''}</span></div>
+    <button class="nav" id="next">${navLabel(offset + 1, 'next')}</button>`;
+  document.getElementById('prev').onclick = () => go(-1);
+  document.getElementById('next').onclick = () => go(1);
+  document.getElementById('today').style.visibility = offset ? 'visible' : 'hidden';
+  el.innerHTML = list.length ? list.map((p) => cardHtml(p, posts.get(p).post, opened.has(p))).join('') : '<p class="empty">この日の投稿はありません</p>';
+  el.querySelectorAll('.card.open textarea').forEach(fit);
+  el.querySelectorAll('textarea').forEach((t) => t.addEventListener('input', () => { fit(t); const c = [...t.value].length; const cn = t.nextElementSibling; cn.textContent = `${c} / 500`; cn.classList.toggle('over', c > 500); }));
+  el.querySelectorAll('[data-toggle]').forEach((b) => b.onclick = () => {
+    const card = b.closest('.card'); const p = card.dataset.path;
+    card.classList.toggle('open') ? opened.add(p) : opened.delete(p);
+    card.querySelectorAll('textarea').forEach(fit);
+  });
+  el.querySelectorAll('button[data-act]').forEach((b) => b.onclick = () => act(b.closest('.card'), b.dataset.act, b));
+  el.querySelectorAll('img[data-img]').forEach(async (img) => { try { img.src = URL.createObjectURL(await gh(img.dataset.img, { raw: true })); } catch {} });
+}
+
+async function go(step) {
+  offset += step;
+  const el = document.getElementById('day');
+  el.style.transform = `translateX(${-step * 24}px)`; el.style.opacity = '.3';
+  const date = jstDate(offset);
+  try {
+    if (!days.has(date)) { renderDay(); document.getElementById('day').innerHTML = '<p class="empty">読み込み中…</p>'; await loadDay(date); }
+  } catch (e) { toast(e.message); }
+  if (jstDate(offset) !== date) return; // 連続で動かした時は最後の日だけ描く
+  renderDay();
+  el.style.transform = ''; el.style.opacity = '';
+  window.scrollTo(0, 0);
+  Promise.all([loadDay(jstDate(offset - 1)), loadDay(jstDate(offset + 1))]).then(() => { if (jstDate(offset) === date) renderDay(); }).catch(() => {});
+}
 
 async function act(card, action, btn) {
   const path = card.dataset.path;
@@ -114,10 +203,33 @@ async function act(card, action, btn) {
     post.review = { ...(post.review || {}), at: new Date().toISOString(), note: card.querySelector('.note').value, edited: edited || !!post.review?.edited };
     post.status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'pending';
     if (edited) post.checks = { ...(post.checks || {}), stale: true };
-    await gh(path, { method: 'PUT', body: JSON.stringify({ message: `approve: ${action} ${post.id}`, content: utf8ToB64(JSON.stringify(post, null, 2) + '\n'), sha: cur.sha, branch: cfg().branch }) });
+    const res = await gh(path, { method: 'PUT', body: JSON.stringify({ message: `approve: ${action} ${post.id}`, content: utf8ToB64(JSON.stringify(post, null, 2) + '\n'), sha: cur.sha, branch: cfg().branch }) });
+    // 書いた内容をそのまま画面に反映する（取り直さないので待たない）
+    posts.set(path, { post, sha: res.content.sha });
+    if (action !== 'save') opened.delete(path);
     toast({ approve: '承認しました', reject: 'ボツにしました', save: '保存しました' }[action]);
-    setTimeout(main, 700);
+    renderDay();
   } catch (e) { toast(e.message); btn.disabled = false; }
+}
+
+function swipe(el) {
+  let x0 = null, y0 = 0, dx = 0, horiz = null;
+  el.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || (e.target.tagName === 'TEXTAREA' && document.activeElement === e.target) || e.target.tagName === 'INPUT') { x0 = null; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; horiz = null;
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (x0 === null) return;
+    dx = e.touches[0].clientX - x0; const dy = e.touches[0].clientY - y0;
+    if (horiz === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) horiz = Math.abs(dx) > Math.abs(dy) * 1.5;
+    if (horiz) { el.style.transition = 'none'; el.style.transform = `translateX(${dx * 0.4}px)`; el.style.opacity = String(1 - Math.min(Math.abs(dx) / 600, .5)); }
+  }, { passive: true });
+  el.addEventListener('touchend', () => {
+    el.style.transition = '';
+    if (x0 !== null && horiz && Math.abs(dx) > 70) go(dx < 0 ? SWIPE_LEFT : -SWIPE_LEFT);
+    else { el.style.transform = ''; el.style.opacity = ''; }
+    x0 = null;
+  });
 }
 
 async function main() {
@@ -126,28 +238,26 @@ async function main() {
   const app = document.getElementById('app');
   app.innerHTML = `<h1>Threads 承認</h1><p class="hyp">読み込み中…</p>`;
   try {
-    const days = [jstDate(-1), jstDate(0), jstDate(1), jstDate(2)];
-    let html = ''; let pending = 0;
-    for (const day of days) {
-      const list = await gh(`data/queue/${day}`);
-      if (!list) continue;
-      const files = list.filter((f) => f.type === 'file' && f.name.endsWith('.json')).sort((a, b) => a.name.localeCompare(b.name));
-      const cards = await Promise.all(files.map(async (f) => {
-        const j = await gh(f.path);
-        const post = JSON.parse(b64ToUtf8(j.content).replace(/^﻿/, ''));
-        posts.set(f.path, { post, sha: j.sha });
-        if (post.status === 'pending') pending++;
-        return cardHtml(f.path, post);
-      }));
-      const label = day === jstDate(0) ? '今日' : day === jstDate(1) ? '明日' : day === jstDate(-1) ? '昨日' : '';
-      html += `<h2>${day} ${label}</h2>${cards.join('')}`;
-    }
-    app.innerHTML = `<h1><span>Threads 承認${pending ? `（承認待ち ${pending}）` : ''}</span><button class="link" id="reload">再読み込み</button></h1>${html || '<p class="hyp">表示する投稿はまだありません。</p>'}<p style="text-align:center"><button class="link" id="setup">設定を変える</button></p>`;
+    days.clear(); posts.clear();
+    await loadDay(jstDate(offset));
+    app.innerHTML = `<div class="daybar" id="bar"></div>
+      <div class="tools"><button class="link" id="today">今日へ</button><span><button class="link" id="all">全部開く</button><button class="link" id="reload">再読み込み</button></span></div>
+      <div id="day"></div>
+      <p class="hint">左右にスワイプで日付を移動・タップで開閉</p>
+      <p style="text-align:center"><button class="link" id="setup">設定を変える</button></p>`;
+    renderDay();
+    swipe(document.getElementById('day'));
+    document.getElementById('today').onclick = () => go(-offset);
     document.getElementById('reload').onclick = main;
     document.getElementById('setup').onclick = () => renderSetup();
-    app.querySelectorAll('textarea').forEach((t) => { fit(t); t.addEventListener('input', () => { fit(t); const n = [...t.value].length; const cn = t.nextElementSibling; cn.textContent = `${n} / 500`; cn.classList.toggle('over', n > 500); }); });
-    app.querySelectorAll('button[data-act]').forEach((b) => b.onclick = () => act(b.closest('.card'), b.dataset.act, b));
-    app.querySelectorAll('img[data-img]').forEach(async (img) => { try { img.src = URL.createObjectURL(await gh(img.dataset.img, { raw: true })); } catch {} });
+    document.getElementById('all').onclick = () => {
+      const list = days.get(jstDate(offset)) || [];
+      const allOpen = list.every((p) => opened.has(p));
+      list.forEach((p) => allOpen ? opened.delete(p) : opened.add(p));
+      document.getElementById('all').textContent = allOpen ? '全部開く' : '全部閉じる';
+      renderDay();
+    };
+    Promise.all([-1, 1, 2].map((o) => loadDay(jstDate(offset + o)))).then(renderDay).catch(() => {});
   } catch (e) {
     renderSetup(`読み込めませんでした（${e.message}）。トークンとリポジトリ名を確認してください`);
   }

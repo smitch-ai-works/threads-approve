@@ -87,6 +87,31 @@ const posts = new Map(); // path -> { post, sha }
 const days = new Map();  // date -> [path]（読み込み済みの日）
 const opened = new Set(); // 開いている投稿の path
 let offset = 0;          // 今日からのずれ（日）
+let publishingConfig = null;
+
+async function loadPublishingConfig() {
+  try {
+    const j = await gh('config.json');
+    publishingConfig = j ? JSON.parse(b64ToUtf8(j.content).replace(/^\uFEFF/, '')) : null;
+  } catch { publishingConfig = null; }
+}
+
+function publishingNoticeHtml(settings = publishingConfig) {
+  if (!settings) return '<p class="msg warn" role="status">投稿の停止状況を確認できません。承認は保存できますが、投稿できる状態か再読み込みで確認してください。</p>';
+  if (!settings.paused) return '';
+  return `<section class="card" style="padding:14px" role="alert"><strong class="msg err">自動投稿は停止中です</strong><p class="msg">承認は保存されますが、停止を解除するまで投稿されません。</p>${settings.paused_reason ? `<p class="msg err">理由：${esc(settings.paused_reason)}</p>` : ''}</section>`;
+}
+
+function renderPublishingNotice() {
+  const el = document.getElementById('publishing-status');
+  if (el) el.innerHTML = publishingNoticeHtml();
+}
+
+function approvalMessage(action, settings = publishingConfig) {
+  if (action !== 'approve') return { reject: 'ボツにしました', save: '保存しました' }[action];
+  if (!settings) return '承認しました。投稿の停止状況は未確認です';
+  return settings.paused ? '承認しました。自動投稿は停止中です' : '承認しました';
+}
 
 function renderSetup(msg = '') {
   const c = cfg();
@@ -192,6 +217,8 @@ async function act(card, action, btn) {
   const path = card.dataset.path;
   btn.disabled = true;
   try {
+    await loadPublishingConfig();
+    renderPublishingNotice();
     const cur = await gh(path); // 最新を取り直してから書く（GitHub Actions と同時に触っても壊れないように）
     const post = JSON.parse(b64ToUtf8(cur.content).replace(/^﻿/, ''));
     if (['posted', 'failed', 'skipped'].includes(post.status)) throw new Error('もう変更できません');
@@ -207,7 +234,7 @@ async function act(card, action, btn) {
     // 書いた内容をそのまま画面に反映する（取り直さないので待たない）
     posts.set(path, { post, sha: res.content.sha });
     if (action !== 'save') opened.delete(path);
-    toast({ approve: '承認しました', reject: 'ボツにしました', save: '保存しました' }[action]);
+    toast(approvalMessage(action));
     renderDay();
   } catch (e) { toast(e.message); btn.disabled = false; }
 }
@@ -239,12 +266,13 @@ async function main() {
   app.innerHTML = `<h1>Threads 承認</h1><p class="hyp">読み込み中…</p>`;
   try {
     days.clear(); posts.clear();
-    await loadDay(jstDate(offset));
-    app.innerHTML = `<div class="daybar" id="bar"></div>
+    await Promise.all([loadDay(jstDate(offset)), loadPublishingConfig()]);
+    app.innerHTML = `<div id="publishing-status"></div><div class="daybar" id="bar"></div>
       <div class="tools"><button class="link" id="today">今日へ</button><span><button class="link" id="all">全部開く</button><button class="link" id="reload">再読み込み</button></span></div>
       <div id="day"></div>
       <p class="hint">左右にスワイプで日付を移動・タップで開閉</p>
       <p style="text-align:center"><button class="link" id="setup">設定を変える</button></p>`;
+    renderPublishingNotice();
     renderDay();
     swipe(document.getElementById('day'));
     document.getElementById('today').onclick = () => go(-offset);
